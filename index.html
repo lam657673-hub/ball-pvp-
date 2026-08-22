@@ -21,7 +21,12 @@ const weaponDefs = {
     name: 'sáng thế chi kiếm', isRangedMelee: true,
     range: 77, dmg: 777.7777, rate: 7.7
   },
-  satna: { name: 'sát na vĩnh hằng', isRitual: true, cooldownMs: 20000 }
+  satna: { name: 'sát na vĩnh hằng', isRitual: true, cooldownMs: 20000 },
+  torch: {
+    name: 'torch', isRangedMelee: true,
+    range: 15, dmg: 15, rate: 1.4,
+    burnDuration: 5000, burnTickMs: 200, burnDmgPerTick: 1
+  }
 };
 Object.keys(weaponDefs).forEach(k => weaponDefs[k].key = k);
 const NORMAL_KEYS = ['kiem', 'riu', 'khien', 'cung', 'no', 'giao', 'railgun'];
@@ -78,9 +83,8 @@ const WW_DAY_DURATION_MS = 10000;
 const WW_NIGHT_DURATION_MS = 10000;
 const WW_DAY_HP_FRAC = 0.9;
 const WW_NIGHT_HP_FRAC = 2.4;
-const WW_DAY_SPEED_START = 50;
-const WW_DAY_SPEED_END = 40;
-const WW_NIGHT_SPEED = 100;
+const WW_DAY_SPEED = 100;
+const WW_NIGHT_SPEED = 200;
 const WW_NIGHT_DMG_MUL = 1.5;
 
 function getRoleHpBonus(baseHp) { return Math.round(baseHp * 0.05); }
@@ -182,7 +186,6 @@ function drawTaiji(g, radius) {
 function drawFireCrack(g, x1, y1, x2, y2, segments, jitter) {
   segments = segments || 10; jitter = jitter || 14;
   const minW = 2, maxW = 12;
-
   const pts = [{ x: x1, y: y1, t: 0 }];
   for (let i = 1; i < segments; i++) {
     const t = i / segments;
@@ -194,14 +197,11 @@ function drawFireCrack(g, x1, y1, x2, y2, segments, jitter) {
     pts.push({ x: bx + (nx / nlen) * off, y: by + (ny / nlen) * off, t });
   }
   pts.push({ x: x2, y: y2, t: 1 });
-
   const widthAt = t => minW + (maxW - minW) * (1 - Math.abs(t - 0.5) * 2);
-
   for (let i = 0; i < pts.length - 1; i++) {
     const a = pts[i], b = pts[i + 1];
     const midT = (a.t + b.t) / 2;
     const w = widthAt(midT);
-
     g.lineStyle(w + 5, 0xff6a1a, 0.5);
     g.lineBetween(a.x, a.y, b.x, b.y);
     g.lineStyle(w + 1.5, 0xffd23f, 0.9);
@@ -211,15 +211,24 @@ function drawFireCrack(g, x1, y1, x2, y2, segments, jitter) {
   }
 }
 
-// ================= NGUYÊN TỐ =================
-const TIERED_TYPES = ['fire', 'lightning', 'poison'];
-const elementNames = { fire: 'lửa', lightning: 'sét', poison: 'độc', shadow: 'bóng tối', plant: 'thực vật' };
+// ================= NGUYÊN TỐ (bao gồm glitch) =================
+const TIERED_TYPES = ['fire', 'lightning', 'poison', 'glitch'];
+const elementNames = { fire: 'lửa', lightning: 'sét', poison: 'độc', shadow: 'bóng tối', plant: 'thực vật', glitch: 'glitch' };
 const roman = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII', 'XIII', 'XIV', 'XV'];
 const MAX_TIER = 15;
+const GLITCH_ROLL_CHANCE = 0.05;
+
 const rollPool = [];
-TIERED_TYPES.forEach(t => [1, 2, 3, 4].forEach(tier => rollPool.push(t + '_' + tier)));
+['fire', 'lightning', 'poison'].forEach(t => [1, 2, 3, 4].forEach(tier => rollPool.push(t + '_' + tier)));
 rollPool.push('shadow_1');
 rollPool.push('plant_1');
+
+function rollElementKey() {
+  if (Math.random() < GLITCH_ROLL_CHANCE) {
+    return 'glitch_' + (1 + Math.floor(Math.random() * 5));
+  }
+  return rollPool[Math.floor(Math.random() * rollPool.length)];
+}
 
 function elLabel(key) {
   const [type, tier] = key.split('_');
@@ -235,6 +244,26 @@ function elObjRandom() {
   return { type, tier };
 }
 
+// ---- glitch: hằng số ----
+const GLITCH_TRAIL_DURATION = 3000;
+const GLITCH_ENEMY_DMG_PER_TICK = 2, GLITCH_ENEMY_TICK_MS = 100;
+const GLITCH_SELF_HEAL_PER_TICK = 5, GLITCH_SELF_TICK_MS = 200;
+const GLITCH_STUN_CHANCE = 0.15;
+const GLITCH_STUN_DURATION = 1000;
+const GLITCH_TRAIL_RADIUS = 22;
+const GLITCH_HACK_COOLDOWN = 25000;
+const GLITCH_HACK_FREEZE_MS = 1000;
+const GLITCH_HACK_HEAL_FRAC = 0.10;
+const GLITCH_PROJ_DMG = 20;
+const GLITCH_PROJ_STUN_CHANCE = 0.40;
+const GLITCH_PROJ_SPEED = 400;
+const GLITCH_COMBO_DASH_SPEED = 350;
+const GLITCH_COMBO_HIT_DMG = 25;
+const GLITCH_COMBO_HIT_INTERVAL = 220;
+const GLITCH_COMBO_EXTEND_CHANCE = 0.15;
+const GLITCH_HAND_SLAM_DMG = 50;
+const GLITCH_HAND_KNOCKBACK = 700;
+
 function loadCoins() { try { const c = localStorage.getItem('coins'); return c ? JSON.parse(c) : 0; } catch (e) { return 0; } }
 function saveCoins(v) { try { localStorage.setItem('coins', JSON.stringify(v)); } catch (e) {} }
 function loadInv() { try { const i = localStorage.getItem('inventory'); return i ? JSON.parse(i) : {}; } catch (e) { return {}; } }
@@ -245,6 +274,8 @@ function loadMinigunUnlock() { try { return localStorage.getItem('minigun_unlock
 function saveMinigunUnlock() { try { localStorage.setItem('minigun_unlocked', '1'); } catch (e) {} }
 function loadSatnaUnlock() { try { return localStorage.getItem('satna_unlocked') === '1'; } catch (e) { return false; } }
 function saveSatnaUnlock() { try { localStorage.setItem('satna_unlocked', '1'); } catch (e) {} }
+function loadTorchUnlock() { try { return localStorage.getItem('torch_unlocked') === '1'; } catch (e) { return false; } }
+function saveTorchUnlock() { try { localStorage.setItem('torch_unlocked', '1'); } catch (e) {} }
 
 function mergeAll(inv) {
   let changed = true;
@@ -360,6 +391,12 @@ function ensureWeaponIcons(scene) {
       g.lineBetween(44, 12, 50, 4);
       g.lineStyle(1.5, 0xdddddd, 1);
       g.beginPath(); g.arc(51, 6, 3, Phaser.Math.DegToRad(0), Phaser.Math.DegToRad(270), false); g.strokePath();
+    },
+    torch: g => {
+      g.fillStyle(0x6b4423, 1); g.fillPoints(rotRectPts(24, 46, 30, 6, -55), true);
+      g.fillStyle(0xff6a1a, 1); g.fillCircle(40, 18, 10);
+      g.fillStyle(0xffd23f, 1); g.fillCircle(40, 18, 6);
+      g.fillStyle(0xfff8dc, 0.8); g.fillCircle(40, 15, 3);
     }
   };
   Object.keys(draw).forEach(key => {
@@ -401,6 +438,7 @@ class SetupScene extends Phaser.Scene {
     this.maceUnlocked = loadUnlock();
     this.minigunUnlocked = loadMinigunUnlock();
     this.satnaUnlocked = loadSatnaUnlock();
+    this.torchUnlocked = loadTorchUnlock();
     this.roleOwned = loadRoleOwned();
     this.adminUnlocked = loadAdminUnlocked();
     this.werewolfOwned = loadWerewolfOwned();
@@ -444,7 +482,6 @@ class SetupScene extends Phaser.Scene {
     this.invContainer = this.add.container(0, 0);
     this.renderInventory();
 
-    // ---- 3 nút role, mỗi nút rộng 120px, xếp hàng ----
     const roleBg = this.add.rectangle(100, 440, 120, 24, 0x1a1a1a).setStrokeStyle(1, 0x555555).setInteractive({ useHandCursor: true });
     const roleText = this.add.text(100, 440, this.roleOwned ? 'survivalist' : 'mua (500xu)', { fontSize: '7px', color: '#fff' }).setOrigin(0.5);
     roleBg.on('pointerdown', () => {
@@ -552,10 +589,15 @@ class SetupScene extends Phaser.Scene {
     } else {
       this.addSatnaButtons();
     }
+
+    if (this.torchUnlocked) this.addTorchButtons();
+    else {
+      // torch mở kèm luôn với mace/songthu/sangthe (nhóm bí mật)
+    }
   }
 
   addSecretWeaponButtons() {
-    ['mace', 'songthu', 'sangthe'].forEach((key, i) => {
+    ['mace', 'songthu', 'sangthe', 'torch'].forEach((key, i) => {
       const idx = 7 + i;
       const x = 60 - 30 + (idx % 2) * 60;
       const y = 76 + Math.floor(idx / 2) * 42;
@@ -575,8 +617,9 @@ class SetupScene extends Phaser.Scene {
     });
   }
 
-  addMinigunButtons() { this.addExtraWeaponButton('minigun', 10); }
-  addSatnaButtons() { this.addExtraWeaponButton('satna', 11); }
+  addMinigunButtons() { this.addExtraWeaponButton('minigun', 11); }
+  addSatnaButtons() { this.addExtraWeaponButton('satna', 12); }
+  addTorchButtons() { this.addExtraWeaponButton('torch', 13); }
 
   addExtraWeaponButton(key, idx) {
     const x = 60 - 30 + (idx % 2) * 60;
@@ -634,12 +677,15 @@ class SetupScene extends Phaser.Scene {
   rollElement() {
     if (this.coins < 100) return;
     this.coins -= 100;
-    const picked = rollPool[Math.floor(Math.random() * rollPool.length)];
+    const picked = rollElementKey();
     this.inventory[picked] = (this.inventory[picked] || 0) + 1;
     this.coinText.setText(this.coins + ' xu');
     saveCoins(this.coins);
     saveInv(this.inventory);
     this.renderInventory();
+    if (!this.torchUnlocked && picked.startsWith('glitch')) {
+      // gợi ý mở torch khi roll trúng glitch lần đầu (không bắt buộc, chỉ là easter egg liên kết)
+    }
   }
   doMergeAll() {
     this.inventory = mergeAll(this.inventory);
@@ -658,10 +704,19 @@ class SetupScene extends Phaser.Scene {
       const col = i % 6, row = Math.floor(i / 6);
       const x = 45 + col * 70, y = 330 + row * 28;
       const active = this.equippedElementKey === key;
-      const bg = this.add.rectangle(x, y, 64, 24, active ? 0x1f3d24 : 0x1a1a1a).setStrokeStyle(active ? 2 : 1, active ? 0x4caf50 : 0x555555).setInteractive({ useHandCursor: true });
-      const txt = this.add.text(x, y - 4, elLabel(key), { fontSize: '8px', color: '#fff' }).setOrigin(0.5);
+      const isGlitch = key.startsWith('glitch');
+      const bg = this.add.rectangle(x, y, 64, 24, active ? 0x1f3d24 : 0x1a1a1a).setStrokeStyle(active ? 2 : 1, isGlitch ? 0xff00ff : (active ? 0x4caf50 : 0x555555)).setInteractive({ useHandCursor: true });
+      const txt = this.add.text(x, y - 4, elLabel(key), { fontSize: '8px', color: isGlitch ? '#ff66ff' : '#fff' }).setOrigin(0.5);
       const cnt = this.add.text(x, y + 6, 'x' + this.inventory[key], { fontSize: '7px', color: '#aaa' }).setOrigin(0.5);
-      bg.on('pointerdown', () => { this.equippedElementKey = active ? null : key; this.renderInventory(); });
+      bg.on('pointerdown', () => {
+        this.equippedElementKey = active ? null : key;
+        this.renderInventory();
+        if (!this.torchUnlocked && !active && key.startsWith('glitch')) {
+          this.torchUnlocked = true;
+          saveTorchUnlock();
+          this.addTorchButtons();
+        }
+      });
       this.invContainer.add([bg, txt, cnt]);
     });
   }
@@ -686,28 +741,30 @@ class MainScene extends Phaser.Scene {
     this.battleOver = false;
     this.dmgMul = getDmgMultiplier(this.startHp);
     this.activeCracks = [];
+    this.glitchTrails = [];
 
-    // ---- nền bản đồ, dưới cùng, đổi màu theo werewolf ----
     this.mapBg = this.add.rectangle(250, 250, 500, 500, 0x0f0f0f).setDepth(-100);
 
     this.p = this.makeEntity(weaponDefs[this.playerWeaponKey], this.startHp, this.playerElementKey ? elObj(this.playerElementKey) : null, this.playerRole);
     this.e = this.makeEntity(weaponDefs[this.enemyWeaponKey], this.startHp, Math.random() < 0.5 ? elObjRandom() : null, null);
 
     this.player = this.add.circle(220, 270, 18, 0x378add);
+    this.player.setStrokeStyle(3, 0x1a3a5c);
     this.physics.add.existing(this.player);
     this.player.body.setCircle(18);
     this.player.body.setBounce(1, 1);
     this.player.body.setCollideWorldBounds(true);
     this.player.body.onWorldBounds = true;
-    this.player.body.setVelocity(180, 40);
+    this.player.body.setVelocity(84, 84);
 
     this.enemy = this.add.circle(270, 220, 18, 0xe24b4a);
+    this.enemy.setStrokeStyle(3, 0x7a1f14);
     this.physics.add.existing(this.enemy);
     this.enemy.body.setCircle(18);
     this.enemy.body.setBounce(1, 1);
     this.enemy.body.setCollideWorldBounds(true);
     this.enemy.body.onWorldBounds = true;
-    this.enemy.body.setVelocity(-180, -40);
+    this.enemy.body.setVelocity(-84, -84);
 
     this.physics.add.collider(this.player, this.enemy, this.onCollide, null, this);
 
@@ -792,7 +849,6 @@ class MainScene extends Phaser.Scene {
   createRig(entity, ball) {
     const container = this.add.container(ball.x, ball.y);
     const rig = { container, armLeft: null, armRight: null, weaponLeft: null, weaponRight: null };
-
     const addArm = (side, key) => {
       const dir = side === 'right' ? 1 : -1;
       const arm = this.add.rectangle(dir * 14, 0, 16, 4, 0xd8b48c);
@@ -801,41 +857,38 @@ class MainScene extends Phaser.Scene {
       if (side === 'right') { rig.armRight = arm; rig.weaponRight = weapon; }
       else { rig.armLeft = arm; rig.weaponLeft = weapon; }
     };
-
-    if (entity.weapon.isDual) {
-      addArm('left', 'giao');
-      addArm('right', 'mace');
-    } else if (entity.weapon.isMace) {
-      addArm('right', 'mace');
-    } else if (entity.weapon.isSpear) {
-      addArm('right', 'giao');
-      rig.weaponRight.setPosition(0, 0);
-    } else {
-      addArm('right', entity.weapon.key);
-    }
+    if (entity.weapon.isDual) { addArm('left', 'giao'); addArm('right', 'mace'); }
+    else if (entity.weapon.isMace) { addArm('right', 'mace'); }
+    else if (entity.weapon.isSpear) { addArm('right', 'giao'); rig.weaponRight.setPosition(0, 0); }
+    else { addArm('right', entity.weapon.key); }
     return rig;
   }
 
   makeEntity(weapon, baseMaxHp, element, role) {
     const hasSurvivalist = role === 'survivalist';
     let maxHp = hasSurvivalist ? baseMaxHp + getRoleHpBonus(baseMaxHp) : baseMaxHp;
-    const entity = { hp: maxHp, maxHp, weapon, element, role: role || null, nextAtkAt: 0, rootedUntil: 0, dot: null, maceFlight: { active: false, wallHits: 0 } };
+    const entity = { hp: maxHp, maxHp, weapon, element, role: role || null, nextAtkAt: 0, rootedUntil: 0, dot: null, torchBurn: null, maceFlight: { active: false, wallHits: 0 } };
     if (weapon.isSpear || weapon.isDual) entity.spear = { state: 'idle', nextReadyAt: 0, chargeEndAt: 0, lungeCount: 0, ultraStartAt: 0 };
     if (weapon.isMace || weapon.isDual) entity.mace = { state: 'idle', nextReadyAt: 0, chargeEndAt: 0, emitter: null };
     if (weapon.isRailgun) entity.railgun = { nextFireAt: 0, firing: false, fireEndsAt: 0, lastTick: 0 };
     if (weapon.isMinigun) entity.minigun = { ammo: weapon.maxAmmo, lastShotAt: 0, reloading: false, reloadEndsAt: 0, shotCount: 0 };
     if (weapon.isRangedMelee) entity.rangedMelee = { lastAtkAt: 0 };
     if (weapon.isRitual) entity.ritual = { state: 'idle', nextReadyAt: 0, phaseEndAt: 0, rings: null, fireGfx: null, fireDir: null, fireLen: 0, lastFireTick: 0, slashDone: false, slashIndex: 0, slashAngles: null };
-    if (role === 'admin') {
-      entity.admin = { nextSkillAt: ADMIN_SKILL_INTERVAL_MS, buffActive: false, buffUntil: 0, speedActive: false, speedUntil: 0, freezeUntil: 0 };
-    }
+    if (role === 'admin') entity.admin = { nextSkillAt: ADMIN_SKILL_INTERVAL_MS, buffActive: false, buffUntil: 0, speedActive: false, speedUntil: 0, freezeUntil: 0 };
     if (role === 'werewolf') {
       entity.werewolfBase = baseMaxHp;
       entity.werewolf = { phase: 'day', phaseStartAt: 0, phaseEndAt: WW_DAY_DURATION_MS };
       entity.maxHp = Math.round(baseMaxHp * WW_DAY_HP_FRAC);
       entity.hp = entity.maxHp;
     }
+    if (element && element.type === 'glitch') {
+      entity.glitch = { skillNextAt: 0, comboActive: false, lockedUntil: 0, stunnedUntil: 0 };
+    }
     return entity;
+  }
+
+  isStunned(entity, now) {
+    return entity.glitch && entity.glitch.stunnedUntil > now;
   }
 
   onCollide() {
@@ -847,6 +900,13 @@ class MainScene extends Phaser.Scene {
     ];
     pairs.forEach(([self, ownBall, opp, oppBall, name, rig]) => {
       if (self.admin && self.admin.freezeUntil > now) return;
+      if (this.isStunned(self, now)) return;
+
+      // ---- glitch: để lại vệt tại điểm va chạm ----
+      if (self.element && self.element.type === 'glitch') {
+        this.spawnGlitchTrail(self, opp, (ownBall.x + oppBall.x) / 2, (ownBall.y + oppBall.y) / 2);
+      }
+
       if (self.spear && (self.spear.state === 'dashing' || self.spear.state === 'ultra_dashing')) {
         this.resolveSpearHit(self, opp, ownBall, name, rig);
       }
@@ -856,6 +916,123 @@ class MainScene extends Phaser.Scene {
       if (!self.weapon.isSpear && !self.weapon.isMace && !self.weapon.isDual && !self.weapon.isRailgun && !self.weapon.isMinigun && !self.weapon.isRangedMelee && !self.weapon.isRitual && now >= self.nextAtkAt && !this.isRooted(self, now)) {
         this.performAttack(self, opp, name, rig);
         self.nextAtkAt = now + computeCooldown(self);
+      }
+    });
+  }
+
+  spawnGlitchTrail(owner, opponentEntity, x, y) {
+    const now = this.time.now;
+    this.glitchTrails.push({ x, y, owner, opponentEntity, createdAt: now, lastEnemyTick: now, lastSelfTick: now });
+    const g = this.add.circle(x, y, GLITCH_TRAIL_RADIUS, 0xff00ff, 0.25);
+    g.setStrokeStyle(2, 0xff00ff, 0.6);
+    this.time.delayedCall(GLITCH_TRAIL_DURATION, () => g.destroy());
+    if (Math.random() < GLITCH_STUN_CHANCE) {
+      opponentEntity.glitch = opponentEntity.glitch || { skillNextAt: 0, comboActive: false, lockedUntil: 0, stunnedUntil: 0 };
+      opponentEntity.glitch.stunnedUntil = now + GLITCH_STUN_DURATION;
+      this.logText.setText('glitch: đối thủ bị stun!');
+    }
+  }
+
+  updateGlitchTrails(now) {
+    this.glitchTrails = this.glitchTrails.filter(trail => {
+      if (this.battleOver) return false;
+      if (now - trail.createdAt > GLITCH_TRAIL_DURATION) return false;
+
+      const ownerBall = trail.owner === this.p ? this.player : this.enemy;
+      const oppBall = trail.owner === this.p ? this.enemy : this.player;
+
+      const distOpp = Math.hypot(oppBall.x - trail.x, oppBall.y - trail.y);
+      if (distOpp < GLITCH_TRAIL_RADIUS && now - trail.lastEnemyTick >= GLITCH_ENEMY_TICK_MS) {
+        trail.lastEnemyTick = now;
+        const dmg = GLITCH_ENEMY_DMG_PER_TICK * this.dmgMul;
+        trail.opponentEntity.hp -= dmg * getRoleIncomingMultiplier(trail.opponentEntity);
+        this.updateBars(); this.checkEnd();
+      }
+
+      const distOwn = Math.hypot(ownerBall.x - trail.x, ownerBall.y - trail.y);
+      if (distOwn < GLITCH_TRAIL_RADIUS && now - trail.lastSelfTick >= GLITCH_SELF_TICK_MS) {
+        trail.lastSelfTick = now;
+        trail.owner.hp = Math.min(trail.owner.maxHp, trail.owner.hp + GLITCH_SELF_HEAL_PER_TICK);
+        this.updateBars();
+      }
+      return true;
+    });
+  }
+
+  updateGlitchSkill(entity, ownBall, opponentBall, opponentEntity, name) {
+    if (!entity.element || entity.element.type !== 'glitch' || entity.element.tier < 5) return;
+    const now = this.time.now;
+    if (!entity.glitch) entity.glitch = { skillNextAt: 0, comboActive: false, lockedUntil: 0, stunnedUntil: 0 };
+    const g = entity.glitch;
+    if (g.comboActive || now < g.skillNextAt) return;
+
+    if (entity.element.tier >= 15) {
+      g.comboActive = true;
+      const dx = opponentBall.x - ownBall.x, dy = opponentBall.y - ownBall.y;
+      const len = Math.hypot(dx, dy) || 1;
+      ownBall.body.setVelocity((dx / len) * GLITCH_COMBO_DASH_SPEED, (dy / len) * GLITCH_COMBO_DASH_SPEED);
+      this.logText.setText(name + ' glitch combo: khóa địch!');
+      this.time.delayedCall(300, () => this.doGlitchComboHit(entity, opponentEntity, opponentBall, name));
+    } else if (entity.element.tier >= 10) {
+      const dmg = Math.round(GLITCH_PROJ_DMG * this.dmgMul);
+      this.applyDamage(opponentEntity, dmg);
+      if (Math.random() < GLITCH_PROJ_STUN_CHANCE) {
+        opponentEntity.glitch = opponentEntity.glitch || { skillNextAt: 0, comboActive: false, lockedUntil: 0, stunnedUntil: 0 };
+        opponentEntity.glitch.stunnedUntil = now + GLITCH_STUN_DURATION;
+      }
+      const proj = this.add.circle(ownBall.x, ownBall.y, 5, 0xff00ff);
+      this.tweens.add({ targets: proj, x: opponentBall.x, y: opponentBall.y, duration: 250, onComplete: () => proj.destroy() });
+      this.logText.setText(name + ' bắn code projectile, gây ' + dmg + ' dmg');
+      this.updateBars(); this.checkEnd();
+      g.skillNextAt = now + GLITCH_HACK_COOLDOWN;
+    } else {
+      entity.hp = Math.min(entity.maxHp, entity.hp + entity.maxHp * GLITCH_HACK_HEAL_FRAC);
+      this.logText.setText(name + ' hack — hồi ' + Math.round(GLITCH_HACK_HEAL_FRAC * 100) + '% hp');
+      this.updateBars();
+      g.skillNextAt = now + GLITCH_HACK_COOLDOWN;
+    }
+  }
+
+  doGlitchComboHit(entity, opponentEntity, opponentBall, name) {
+    if (this.battleOver) return;
+    const g = entity.glitch;
+    opponentEntity.rootedUntil = this.time.now + 500; // khóa liên tục, gia hạn mỗi đòn
+    opponentBall.body.setVelocity(0, 0);
+
+    const dmg = Math.round(GLITCH_COMBO_HIT_DMG * this.dmgMul);
+    this.applyDamage(opponentEntity, dmg);
+    this.logText.setText(name + ' glitch combo, gây ' + dmg + ' dmg');
+    this.updateBars(); this.checkEnd();
+
+    if (this.battleOver) { g.comboActive = false; return; }
+
+    if (Math.random() < GLITCH_COMBO_EXTEND_CHANCE) {
+      this.time.delayedCall(GLITCH_COMBO_HIT_INTERVAL, () => this.doGlitchComboHit(entity, opponentEntity, opponentBall, name));
+    } else {
+      // ---- kết thúc combo: bàn tay từ bản đồ kéo địch xuống + knockback ----
+      this.doGlitchHandSlam(entity, opponentEntity, opponentBall, name);
+      g.comboActive = false;
+      g.skillNextAt = this.time.now + GLITCH_HACK_COOLDOWN;
+    }
+  }
+
+  doGlitchHandSlam(entity, opponentEntity, opponentBall, name) {
+    const handStartX = opponentBall.x < 250 ? -30 : 530;
+    const hand = this.add.rectangle(handStartX, opponentBall.y, 40, 60, 0x2a2a2a);
+    this.tweens.add({
+      targets: hand, x: opponentBall.x, duration: 200, ease: 'Cubic.easeIn',
+      onComplete: () => {
+        this.tweens.add({
+          targets: hand, y: opponentBall.y + 40, duration: 150, ease: 'Cubic.easeIn',
+          onComplete: () => hand.destroy()
+        });
+        const dmg = Math.round(GLITCH_HAND_SLAM_DMG * this.dmgMul);
+        this.applyDamage(opponentEntity, dmg);
+        const dx = (Math.random() - 0.5), dy = 1;
+        const len = Math.hypot(dx, dy) || 1;
+        opponentBall.body.setVelocity((dx / len) * GLITCH_HAND_KNOCKBACK, (dy / len) * GLITCH_HAND_KNOCKBACK);
+        this.logText.setText(name + ' bàn tay glitch đập ' + (opponentEntity === this.p ? 'bạn' : 'địch') + ' xuống! -' + dmg);
+        this.updateBars(); this.checkEnd();
       }
     });
   }
@@ -914,6 +1091,7 @@ class MainScene extends Phaser.Scene {
     if (!entity.spear || this.battleOver) return;
     const now = this.time.now;
     if (entity.admin && entity.admin.freezeUntil > now) return;
+    if (this.isStunned(entity, now)) return;
     const s = entity.spear;
     if (s.state === 'idle' && now >= s.nextReadyAt) {
       const isUltra = s.lungeCount >= LUNGE_TRIGGER_COUNT;
@@ -957,6 +1135,7 @@ class MainScene extends Phaser.Scene {
     if (!entity.mace || this.battleOver) return;
     const now = this.time.now;
     if (entity.admin && entity.admin.freezeUntil > now) return;
+    if (this.isStunned(entity, now)) return;
     const m = entity.mace;
     if (m.state === 'idle' && now >= m.nextReadyAt) {
       m.state = 'charging';
@@ -979,6 +1158,7 @@ class MainScene extends Phaser.Scene {
     if (!entity.weapon.isRailgun || this.battleOver) return;
     const now = this.time.now;
     if (entity.admin && entity.admin.freezeUntil > now) return;
+    if (this.isStunned(entity, now)) return;
     const r = entity.railgun, w = entity.weapon;
     if (!r.firing && now >= r.nextFireAt) {
       r.firing = true; r.fireEndsAt = now + w.beamDurationMs; r.lastTick = now;
@@ -1003,6 +1183,7 @@ class MainScene extends Phaser.Scene {
     if (!entity.weapon.isMinigun || this.battleOver) return;
     const now = this.time.now;
     if (entity.admin && entity.admin.freezeUntil > now) return;
+    if (this.isStunned(entity, now)) return;
     const m = entity.minigun, w = entity.weapon;
 
     if (m.ammo <= 0 && !m.reloading) {
@@ -1051,6 +1232,7 @@ class MainScene extends Phaser.Scene {
     if (!entity.weapon.isRangedMelee || this.battleOver) return;
     const now = this.time.now;
     if (entity.admin && entity.admin.freezeUntil > now) return;
+    if (this.isStunned(entity, now)) return;
     const rm = entity.rangedMelee, w = entity.weapon;
     let interval = (1000 / w.rate) * getRoleSpeedMultiplier(entity);
     if (entity.admin && entity.admin.speedActive) interval *= 0.5;
@@ -1068,12 +1250,28 @@ class MainScene extends Phaser.Scene {
     const roundedDmg = Math.round(finalDmg * this.dmgMul);
     this.applyDamage(opponentEntity, roundedDmg);
 
-    this.logText.setText(name + ' vung sáng thế chi kiếm' + (isCrit ? ' CRIT!' : '') + ', gây ' + roundedDmg + ' dmg');
+    this.logText.setText(name + ' dùng ' + entity.weapon.name + (isCrit ? ' CRIT!' : '') + ', gây ' + roundedDmg + ' dmg');
+
+    if (entity.weapon.key === 'torch') {
+      opponentEntity.torchBurn = { endsAt: now + w.burnDuration, tickMs: w.burnTickMs, dmgPerTick: w.burnDmgPerTick, lastTick: now };
+    }
 
     const ring = this.add.circle(ownBall.x, ownBall.y, 5, 0xffd700, 0.5);
     this.tweens.add({ targets: ring, radius: w.range, alpha: 0, duration: 200, onComplete: () => ring.destroy() });
 
     this.updateBars(); this.checkEnd();
+  }
+
+  tickTorchBurn(entity, now) {
+    const b = entity.torchBurn;
+    if (!b) return;
+    if (now > b.endsAt) { entity.torchBurn = null; return; }
+    if (now - b.lastTick >= b.tickMs) {
+      const dmg = Math.round(b.dmgPerTick * this.dmgMul);
+      this.applyDamage(entity, dmg);
+      b.lastTick = now;
+      this.updateBars(); this.checkEnd();
+    }
   }
 
   updateRitual(entity, ownBall, opponentBall, opponentEntity, name) {
@@ -1217,11 +1415,7 @@ class MainScene extends Phaser.Scene {
     burst.explode(15);
     this.time.delayedCall(350, () => burst.destroy());
 
-    this.activeCracks.push({
-      x1, y1, x2, y2,
-      attacker: entity, opponentBall, opponentEntity,
-      createdAt: this.time.now, lastTick: this.time.now
-    });
+    this.activeCracks.push({ x1, y1, x2, y2, attacker: entity, opponentBall, opponentEntity, createdAt: this.time.now, lastTick: this.time.now });
 
     this.logText.setText(name + ' chém đường ' + (entity.ritual.slashIndex + 1) + '/3');
 
@@ -1265,10 +1459,7 @@ class MainScene extends Phaser.Scene {
     const cx = 250, cy = 250;
 
     const core = this.add.circle(cx, cy, 5, 0xffffff, 1);
-    this.tweens.add({
-      targets: core, radius: 220, alpha: 0, duration: 600, ease: 'Cubic.easeOut',
-      onComplete: () => core.destroy()
-    });
+    this.tweens.add({ targets: core, radius: 220, alpha: 0, duration: 600, ease: 'Cubic.easeOut', onComplete: () => core.destroy() });
     const ring = this.add.circle(cx, cy, 5, 0xffffff, 0);
     ring.setStrokeStyle(3, 0xffffff, 0.9);
     this.tweens.add({
@@ -1298,6 +1489,7 @@ class MainScene extends Phaser.Scene {
 
   performAttack(attacker, defender, name, rig) {
     const now = this.time.now;
+    if (this.isStunned(attacker, now)) return;
     if (defender.element && defender.element.type === 'shadow' && Math.random() < 0.05) {
       this.logText.setText((name === 'bạn' ? 'địch' : 'bạn') + ' tàng hình né đòn!');
       return;
@@ -1401,14 +1593,7 @@ class MainScene extends Phaser.Scene {
       this.updateBars();
     }
 
-    let targetSpeed;
-    if (ww.phase === 'day') {
-      const t = Math.min(1, (now - ww.phaseStartAt) / WW_DAY_DURATION_MS);
-      targetSpeed = WW_DAY_SPEED_START + (WW_DAY_SPEED_END - WW_DAY_SPEED_START) * t;
-    } else {
-      targetSpeed = WW_NIGHT_SPEED;
-    }
-
+    const targetSpeed = ww.phase === 'day' ? WW_DAY_SPEED : WW_NIGHT_SPEED;
     const vx = ownBall.body.velocity.x, vy = ownBall.body.velocity.y;
     const curSpeed = Math.hypot(vx, vy);
     if (curSpeed > 0.01) {
@@ -1417,7 +1602,7 @@ class MainScene extends Phaser.Scene {
     }
 
     if (isPlayerSide) {
-      const targetColor = ww.phase === 'day' ? 0xffffff : 0x000000;
+      const targetColor = ww.phase === 'day' ? 0xe8e4da : 0x1a1a22;
       if (this.mapBg.fillColor !== targetColor) this.mapBg.setFillStyle(targetColor);
     }
   }
@@ -1466,9 +1651,14 @@ class MainScene extends Phaser.Scene {
     this.updateAdminSkill(this.e, this.enemy, 'địch');
     this.updateWerewolf(this.p, this.player, true, now);
     this.updateWerewolf(this.e, this.enemy, false, now);
+    this.updateGlitchSkill(this.p, this.player, this.enemy, this.e, 'bạn');
+    this.updateGlitchSkill(this.e, this.enemy, this.player, this.p, 'địch');
+    this.updateGlitchTrails(now);
     this.updateActiveCracks(now);
     this.tickDot(this.p, now);
     this.tickDot(this.e, now);
+    this.tickTorchBurn(this.p, now);
+    this.tickTorchBurn(this.e, now);
 
     this.pRig.container.setPosition(this.player.x, this.player.y - 26);
     this.eRig.container.setPosition(this.enemy.x, this.enemy.y - 26);
