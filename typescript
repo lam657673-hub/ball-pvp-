@@ -1,0 +1,937 @@
+declare const Phaser: any;
+export interface WeaponDef {
+key: string;
+name: string;
+dmg?: number;
+comboChance?: number;
+baseCooldown?: number;
+shieldPierce?: number;
+blockReduction?: number;
+isSpear?: boolean;
+isRailgun?: boolean;
+fireCycleMs?: number;
+beamDurationMs?: number;
+tickMs?: number;
+tickDmg?: number;
+isMace?: boolean;
+maceScale?: number;
+isDual?: boolean;
+isMinigun?: boolean;
+maxAmmo?: number;
+normalRate?: number;
+normalDmg?: number;
+heatRate?: number;
+heatDmg?: number;
+heatThreshold?: number;
+reloadMs?: number;
+isRangedMelee?: boolean;
+range?: number;
+rate?: number;
+burnDuration?: number;
+burnTickMs?: number;
+burnDmgPerTick?: number;
+isRitual?: boolean;
+cooldownMs?: number;
+isComboFist?: boolean;
+baseDmg?: number;
+}
+export interface ElementData {
+type: string;
+tier: number;
+}
+export interface Entity {
+hp: number;
+maxHp: number;
+weapon: WeaponDef;
+element: ElementData | null;
+role: string | null;
+nextAtkAt: number;
+rootedUntil: number;
+dot: { dmgPerSec: number; endsAt: number; lastTick: number } | null;
+torchBurn?: { endsAt: number; tickMs: number; dmgPerTick: number; lastTick: number } | null;
+godMode?: boolean;
+poisonStacks?: number;
+spear?: any;
+mace?: any;
+railgun?: any;
+minigun?: any;
+rangedMelee?: any;
+ritual?: any;
+admin?: any;
+werewolf?: any;
+werewolfBase?: number;
+}
+export const weaponDefs: Record<string, WeaponDef> = {
+kiem: { key: 'kiem', name: 'Kiếm', dmg: 12, comboChance: 0.3, baseCooldown: 650 },
+riu: { key: 'riu', name: 'Rìu', dmg: 28, shieldPierce: 0.45, baseCooldown: 900 },
+khien: { key: 'khien', name: 'Khiên', dmg: 6, blockReduction: 0.7, baseCooldown: 700 },
+cung: { key: 'cung', name: 'Cung', dmg: 14, baseCooldown: 700 },
+no: { key: 'no', name: 'Nỏ', dmg: 45, baseCooldown: 1700 },
+giao: { key: 'giao', name: 'Giáo', dmg: 24, isSpear: true },
+railgun: { key: 'railgun', name: 'Railgun', isRailgun: true, fireCycleMs: 5000, beamDurationMs: 4000, tickMs: 100, tickDmg: 6 },
+mace: { key: 'mace', name: 'Chùy Bí Mật', dmg: 28, isMace: true, maceScale: 0.22 },
+songthu: { key: 'songthu', name: 'Song Thủ', isDual: true },
+songquyen:{ key: 'songquyen', name: 'Song Quyền', isComboFist: true, baseDmg: 5, baseCooldown: 800 },
+minigun: {
+key: 'minigun', name: 'Minigun', isMinigun: true,
+maxAmmo: 10000, normalRate: 20, normalDmg: 10,
+heatRate: 30, heatDmg: 16, heatThreshold: 250, reloadMs: 3000
+},
+sangthe: {
+key: 'sangthe', name: 'Sáng Thế Chi Kiếm', isRangedMelee: true,
+range: 85, dmg: 777.77, rate: 7.7
+},
+satna: { key: 'satna', name: 'Sát Na Vinh Hằng', isRitual: true, cooldownMs: 18000 },
+torch: {
+key: 'torch', name: 'Ngọn Đuốc', isRangedMelee: true,
+range: 18, dmg: 16, rate: 1.5,
+burnDuration: 5000, burnTickMs: 200, burnDmgPerTick: 2
+}
+};
+const NORMAL_KEYS = ['kiem', 'riu', 'khien', 'cung', 'no', 'giao', 'railgun', 'songquyen'];
+function randWeapon(): WeaponDef { return weaponDefs[NORMAL_KEYS[Math.floor(Math.random() * NORMAL_KEYS.length)]]; }
+function dealDamage(attacker: WeaponDef, defender: WeaponDef | null, baseDmg: number): number {
+let dmg = baseDmg;
+if (defender && defender.blockReduction) {
+let reduction = defender.blockReduction;
+if (attacker.shieldPierce) reduction *= (1 - attacker.shieldPierce);
+dmg *= (1 - reduction);
+}
+return dmg;
+}
+function lightningBoltDmg(tier: number): number { return 6 + (tier * 5); }
+function getDmgMultiplier(maxHp: number): number { return maxHp <= 500 ? 1 : Math.sqrt(maxHp / 500); }
+const ROLE_COST = 500;
+const WEREWOLF_COST = 1500;
+const ADMIN_PASSWORD = '363636366767676769696969';
+function loadCoins(): number { try { return parseInt(localStorage.getItem('coins') || '0') || 0; } catch { return 0; } }
+function saveCoins(v: number) { try { localStorage.setItem('coins', String(v)); } catch {} }
+function loadInv(): Record<string, number> { try { return JSON.parse(localStorage.getItem('inventory') || '{}') || {}; } catch { return {}; } }
+function saveInv(v: Record<string, number>) { try { localStorage.setItem('inventory', JSON.stringify(v)); } catch {} }
+function loadUnlock(key: string): boolean { try { return localStorage.getItem(key) === '1'; } catch { return false; } }
+function saveUnlock(key: string) { try { localStorage.setItem(key, '1'); } catch {} }
+const ADMIN_DMG_MUL = 1.77;
+const ADMIN_INCOMING_MUL = 0.777;
+const ADMIN_CRIT_CHANCE = 0.777;
+const ADMIN_CRIT_MUL = 1.5;
+const WW_DAY_DURATION_MS = 10000;
+const WW_NIGHT_DURATION_MS = 10000;
+const WW_DAY_HP_FRAC = 0.9;
+const WW_NIGHT_HP_FRAC = 2.4;
+const WW_NIGHT_DMG_MUL = 1.6;
+function getRoleHpBonus(baseHp: number): number { return Math.round(baseHp * 0.05); }
+function getRoleIncomingMultiplier(entity: Entity): number {
+if (entity.godMode) return 0;
+if (entity.role === 'survivalist') return 0.92;
+if (entity.role === 'admin') return ADMIN_INCOMING_MUL;
+return 1;
+}
+function getRoleDmgMultiplier(entity: Entity): number {
+if (entity.role === 'survivalist') {
+const missingFrac = 1 - (entity.hp / entity.maxHp);
+return 1 + Math.max(0, missingFrac * 1.5);
+}
+return 1;
+}
+function getRoleSpeedMultiplier(entity: Entity): number {
+if (entity.role === 'survivalist') {
+const missingFrac = 1 - (entity.hp / entity.maxHp);
+return 1 - 0.4 * Math.max(0, missingFrac);
+}
+return 1;
+}
+function applyAdminCrit(entity: Entity, dmg: number): { dmg: number; isCrit: boolean } {
+if (entity.role === 'admin' && Math.random() < ADMIN_CRIT_CHANCE) {
+return { dmg: dmg * ADMIN_CRIT_MUL, isCrit: true };
+}
+return { dmg, isCrit: false };
+}
+function computeCooldown(entity: Entity): number {
+let cd = entity.weapon.baseCooldown || 700;
+if (entity.element) {
+if (entity.element.type === 'fire') cd -= entity.element.tier * 30;
+if (entity.element.type === 'lightning') cd -= entity.element.tier * 25;
+}
+cd *= getRoleSpeedMultiplier(entity);
+if (entity.admin && entity.admin.speedActive) cd *= 0.5;
+return Math.max(120, cd);
+}
+const TIERED_TYPES = ['fire', 'lightning', 'poison', 'glitch'];
+const elementNames: Record<string, string> = { fire: 'Lửa', lightning: 'Sét', poison: 'Độc', shadow: 'Bóng Tối', plant: 'Thực Vật', glitch: 'Glitch' };
+const roman = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII', 'XIII', 'XIV', 'XV'];
+const MAX_TIER = 15;
+const rollPool: string[] = [];
+['fire', 'lightning', 'poison'].forEach(t => [1, 2, 3, 4].forEach(tier => rollPool.push(t + '_' + tier)));
+rollPool.push('shadow_1', 'plant_1');
+function rollElementKey(): string {
+if (Math.random() < 0.06) return 'glitch_' + (1 + Math.floor(Math.random() * 5));
+return rollPool[Math.floor(Math.random() * rollPool.length)];
+}
+function elLabel(key: string | null): string {
+if (!key) return '';
+const [type, tier] = key.split('_');
+const t = parseInt(tier);
+if (type === 'shadow' || type === 'plant') return elementNames[type];
+return elementNames[type] + ' ' + (roman[t - 1] || t);
+}
+function elObj(key: string): ElementData { const [type, tier] = key.split('_'); return { type, tier: parseInt(tier) || 1 }; }
+function elObjRandom(): ElementData {
+const types = ['fire', 'lightning', 'poison', 'shadow', 'plant'];
+const type = types[Math.floor(Math.random() * types.length)];
+const tier = (type === 'shadow' || type === 'plant') ? 1 : 1 + Math.floor(Math.random() * 5);
+return { type, tier };
+}
+function mergeAll(inv: Record<string, number>): Record<string, number> {
+let changed = true;
+while (changed) {
+changed = false;
+TIERED_TYPES.forEach(type => {
+for (let tier = 1; tier < MAX_TIER; tier++) {
+const key = type + '_' + tier, nextKey = type + '_' + (tier + 1);
+if ((inv[key] || 0) >= 2) {
+inv[key] -= 2;
+if (inv[key] <= 0) delete inv[key];
+inv[nextKey] = (inv[nextKey] || 0) + 1;
+changed = true;
+}
+}
+});
+}
+return inv;
+}
+function rotRectPts(cx: number, cy: number, length: number, width: number, angleDeg: number) {
+const a = Phaser.Math.DegToRad(angleDeg);
+const dx = Math.cos(a), dy = Math.sin(a);
+const nx = -dy, ny = dx;
+const hl = length / 2, hw = width / 2;
+return [
+{ x: cx - dx * hl - nx * hw, y: cy - dy * hl - ny * hw },
+{ x: cx + dx * hl - nx * hw, y: cy + dy * hl - ny * hw },
+{ x: cx + dx * hl + nx * hw, y: cy + dy * hl + ny * hw },
+{ x: cx - dx * hl + nx * hw, y: cy - dy * hl + ny * hw }
+];
+}
+function ensureWeaponIcons(scene: any) {
+const S = 64;
+const draw: Record<string, (g: any) => void> = {
+kiem: g => {
+g.fillStyle(0x8a5a2b, 1); g.fillPoints(rotRectPts(16, 50, 22, 8, -45), true);
+g.fillStyle(0xd8d8d8, 1); g.fillPoints(rotRectPts(42, 24, 34, 8, -45), true);
+},
+riu: g => {
+g.fillStyle(0x6b4423, 1); g.fillPoints(rotRectPts(30, 34, 46, 5, -45), true);
+g.fillStyle(0xaaaaaa, 1); g.fillTriangle(38, 12, 56, 18, 42, 32);
+},
+khien: g => {
+g.fillStyle(0x4a90d9, 1);
+g.fillPoints([{x:32,y:8},{x:52,y:18},{x:52,y:38},{x:32,y:58},{x:12,y:38},{x:12,y:18}], true);
+},
+cung: g => {
+g.lineStyle(4, 0xc99a5b, 1);
+g.beginPath(); g.arc(32, 32, 24, Phaser.Math.DegToRad(-70), Phaser.Math.DegToRad(70), false); g.strokePath();
+},
+no: g => {
+g.fillStyle(0x6b4423, 1); g.fillRect(20, 28, 28, 8);
+g.fillStyle(0x555555, 1); g.fillRect(44, 24, 6, 16);
+},
+giao: g => {
+g.fillStyle(0x8a8a8a, 1); g.fillPoints(rotRectPts(30, 40, 52, 4, -45), true);
+g.fillStyle(0xe0e0e0, 1); g.fillTriangle(48, 20, 60, 8, 56, 26);
+},
+railgun: g => {
+g.fillStyle(0x3a4a5a, 1); g.fillPoints(rotRectPts(32, 32, 44, 14, -30), true);
+g.fillStyle(0x00ffff, 1); g.fillCircle(50, 14, 4);
+},
+songquyen: g => {
+g.fillStyle(0xf59e0b, 1); g.fillCircle(24, 32, 10);
+g.fillStyle(0xef4444, 1); g.fillCircle(40, 32, 10);
+g.fillStyle(0xffffff, 0.8); g.fillCircle(22, 30, 3); g.fillCircle(38, 30, 3);
+},
+mace: g => {
+g.fillStyle(0x5a5a5a, 1); g.fillPoints(rotRectPts(20, 46, 30, 6, -45), true);
+g.fillStyle(0x8a8a8a, 1); g.fillCircle(46, 20, 14);
+},
+songthu: g => {
+g.fillStyle(0x8a8a8a, 1); g.fillCircle(24, 24, 8); g.fillCircle(40, 40, 8);
+},
+minigun: g => {
+g.fillStyle(0x4a4a4a, 1);
+for (let i = 0; i < 4; i++) g.fillRect(20 + i * 3, 14, 2, 36);
+},
+sangthe: g => {
+g.fillStyle(0xffd700, 1); g.fillPoints(rotRectPts(32, 32, 46, 10, -45), true);
+},
+satna: g => {
+g.fillStyle(0x9b59b6, 1); g.fillCircle(32, 32, 16);
+g.fillStyle(0xffffff, 1); g.fillCircle(32, 32, 6);
+},
+torch: g => {
+g.fillStyle(0x6b4423, 1); g.fillPoints(rotRectPts(24, 46, 30, 6, -55), true);
+g.fillStyle(0xff6a1a, 1); g.fillCircle(40, 18, 10);
+}
+};
+Object.keys(draw).forEach(key => {
+if (scene.textures.exists(key)) return;
+const g = scene.add.graphics();
+draw[key](g);
+g.generateTexture(key, S, S);
+g.destroy();
+});
+}
+const HP_OPTIONS = [500, 1000, 1500, 2000, 3000, 5000, 10000];
+export class SetupScene extends Phaser.Scene {
+coins: number = 0;
+inventory: Record<string, number> = {};
+maceUnlocked: boolean = false;
+minigunUnlocked: boolean = false;
+satnaUnlocked: boolean = false;
+torchUnlocked: boolean = false;
+roleOwned: boolean = false;
+adminUnlocked: boolean = false;
+werewolfOwned: boolean = false;
+selectedRole: string | null = null;
+selectedHp: number = 500;
+playerWeaponKey: string = 'songquyen';
+enemyWeaponKey: string = 'random';
+equippedElementKey: string | null = null;
+hpButtons: any[] = [];
+playerWeaponButtons: any[] = [];
+enemyWeaponButtons: any[] = [];
+coinText: any;
+invContainer: any;
+refreshRoleButtons: any;
+constructor() { super('SetupScene'); }
+create() {
+ensureWeaponIcons(this);
+this.coins = loadCoins();
+this.inventory = loadInv();
+this.maceUnlocked = loadUnlock('mace_unlocked');
+this.minigunUnlocked = loadUnlock('minigun_unlocked');
+this.satnaUnlocked = loadUnlock('satna_unlocked');
+this.torchUnlocked = loadUnlock('torch_unlocked');
+this.roleOwned = loadUnlock('role_survivalist');
+this.adminUnlocked = loadUnlock('role_admin_unlocked');
+this.werewolfOwned = loadUnlock('role_werewolf');
+this.add.text(250, 8, 'CHỌN LƯỢNG MÁU (HP)', { fontSize: '11px', color: '#aaa', fontStyle: 'bold' }).setOrigin(0.5);
+this.hpButtons = [];
+HP_OPTIONS.forEach((hp, i) => {
+const col = i % 4, row = Math.floor(i / 4);
+const x = 65 + col * 110, y = 24 + row * 20;
+const bg = this.add.rectangle(x, y, 95, 17, 0x1a1a1a).setStrokeStyle(1, 0x555555).setInteractive({ useHandCursor: true });
+this.add.text(x, y, String(hp), { fontSize: '9px', color: '#fff' }).setOrigin(0.5);
+bg.on('pointerdown', () => this.selectHp(hp));
+this.hpButtons.push({ hp, bg });
+});
+this.selectHp(500);
+this.add.text(120, 68, 'VŨ KHÍ BẠN', { fontSize: '11px', color: '#378add', fontStyle: 'bold' }).setOrigin(0.5);
+this.add.text(380, 68, 'VŨ KHÍ ĐỊCH', { fontSize: '11px', color: '#e24b4a', fontStyle: 'bold' }).setOrigin(0.5);
+this.playerWeaponButtons = this.buildWeaponColumn(60, 82, (key: string) => this.selectPlayerWeapon(key), false);
+this.enemyWeaponButtons = this.buildWeaponColumn(320, 82, (key: string) => this.selectEnemyWeapon(key), true);
+this.selectPlayerWeapon('songquyen');
+this.selectEnemyWeapon('random');
+this.add.text(250, 305, 'KHO NGUYÊN TỐ & DUNG HỢP', { fontSize: '11px', color: '#ffd700', fontStyle: 'bold' }).setOrigin(0.5);
+this.coinText = this.add.text(12, 302, this.coins + ' Xu', { fontSize: '11px', color: '#ffd700', fontStyle: 'bold' });
+const rollBg = this.add.rectangle(435, 305, 84, 20, 0x1f3d24).setStrokeStyle(1, 0x4caf50).setInteractive({ useHandCursor: true });
+this.add.text(435, 305, '🎲 Quay 100xu', { fontSize: '9px', color: '#fff' }).setOrigin(0.5);
+rollBg.on('pointerdown', () => this.rollElement());
+const mergeBg = this.add.rectangle(345, 305, 70, 20, 0x2a3a5a).setStrokeStyle(1, 0x378add).setInteractive({ useHandCursor: true });
+this.add.text(345, 305, '⚡ Hợp Nhất', { fontSize: '9px', color: '#fff' }).setOrigin(0.5);
+mergeBg.on('pointerdown', () => this.doMergeAll());
+this.invContainer = this.add.container(0, 0);
+this.renderInventory();
+const roleBg = this.add.rectangle(95, 436, 120, 26, 0x1a1a1a).setStrokeStyle(1, 0x555555).setInteractive({ useHandCursor: true });
+const roleText = this.add.text(95, 436, this.roleOwned ? 'SURVIVALIST' : 'Mua (500 xu)', { fontSize: '9px', color: '#fff' }).setOrigin(0.5);
+roleBg.on('pointerdown', () => {
+if (!this.roleOwned) {
+if (this.coins < ROLE_COST) { alert('Không đủ 500 xu!'); return; }
+this.coins -= ROLE_COST; saveCoins(this.coins); this.coinText.setText(this.coins + ' Xu');
+this.roleOwned = true; saveUnlock('role_survivalist');
+roleText.setText('SURVIVALIST');
+} else {
+this.selectedRole = this.selectedRole === 'survivalist' ? null : 'survivalist';
+this.refreshRoleButtons();
+}
+});
+const adminBg = this.add.rectangle(250, 436, 120, 26, 0x1a1a1a).setStrokeStyle(1, 0x555555).setInteractive({ useHandCursor: true });
+const adminText = this.add.text(250, 436, this.adminUnlocked ? 'ADMIN' : 'Nhập Pass Admin', { fontSize: '9px', color: '#fff' }).setOrigin(0.5);
+adminBg.on('pointerdown', () => {
+if (!this.adminUnlocked) {
+const ans = prompt('Nhập mật khẩu Admin:');
+if (ans && ans.trim() === ADMIN_PASSWORD) {
+this.adminUnlocked = true; saveUnlock('role_admin_unlocked');
+adminText.setText('ADMIN');
+} else if (ans !== null) { alert('Sai mật khẩu!'); }
+} else {
+this.selectedRole = this.selectedRole === 'admin' ? null : 'admin';
+this.refreshRoleButtons();
+}
+});
+const werewolfBg = this.add.rectangle(405, 436, 120, 26, 0x1a1a1a).setStrokeStyle(1, 0x555555).setInteractive({ useHandCursor: true });
+const werewolfText = this.add.text(405, 436, this.werewolfOwned ? 'WEREWOLF' : 'Mua (1500 xu)', { fontSize: '9px', color: '#fff' }).setOrigin(0.5);
+werewolfBg.on('pointerdown', () => {
+if (!this.werewolfOwned) {
+if (this.coins < WEREWOLF_COST) { alert('Không đủ 1500 xu!'); return; }
+this.coins -= WEREWOLF_COST; saveCoins(this.coins); this.coinText.setText(this.coins + ' Xu');
+this.werewolfOwned = true; saveUnlock('role_werewolf');
+werewolfText.setText('WEREWOLF');
+} else {
+this.selectedRole = this.selectedRole === 'werewolf' ? null : 'werewolf';
+this.refreshRoleButtons();
+}
+});
+this.refreshRoleButtons = () => {
+roleBg.setStrokeStyle(this.selectedRole === 'survivalist' ? 2 : 1, this.selectedRole === 'survivalist' ? 0x4caf50 : 0x555555);
+adminBg.setStrokeStyle(this.selectedRole === 'admin' ? 2 : 1, this.selectedRole === 'admin' ? 0xff5555 : 0x555555);
+werewolfBg.setStrokeStyle(this.selectedRole === 'werewolf' ? 2 : 1, this.selectedRole === 'werewolf' ? 0xffaa00 : 0x555555);
+};
+const startBg = this.add.rectangle(250, 478, 180, 32, 0x2a6b3f).setStrokeStyle(2, 0x4caf50).setInteractive({ useHandCursor: true });
+this.add.text(250, 478, '▶ BẮT ĐẦU CHIẾN', { fontSize: '13px', color: '#fff', fontStyle: 'bold' }).setOrigin(0.5);
+startBg.on('pointerdown', () => {
+const enemyKey = this.enemyWeaponKey === 'random' ? randWeapon().key : this.enemyWeaponKey;
+this.scene.start('MainScene', {
+playerHp: this.selectedHp,
+playerWeaponKey: this.playerWeaponKey,
+enemyWeaponKey: enemyKey,
+playerElementKey: this.equippedElementKey,
+playerRole: this.selectedRole
+});
+});
+if (this.maceUnlocked) this.addSecretWeaponButtons();
+if (this.minigunUnlocked) this.addExtraWeaponButton('minigun', 11);
+if (this.satnaUnlocked) this.addExtraWeaponButton('satna', 12);
+if (this.torchUnlocked) this.addExtraWeaponButton('torch', 13);
+}
+addSecretWeaponButtons() {
+['mace', 'songthu', 'sangthe'].forEach((key, i) => {
+this.addExtraWeaponButton(key, 8 + i);
+});
+}
+addExtraWeaponButton(key: string, idx: number) {
+const x = 60 - 30 + (idx % 2) * 60, y = 82 + Math.floor(idx / 2) * 38;
+const bg = this.add.rectangle(x, y, 56, 34, 0x1a1a1a).setStrokeStyle(1, 0x555555).setInteractive({ useHandCursor: true });
+this.add.image(x, y - 5, key).setScale(0.3);
+this.add.text(x, y + 10, weaponDefs[key].name, { fontSize: '7px', color: '#fff' }).setOrigin(0.5);
+bg.on('pointerdown', () => this.selectPlayerWeapon(key));
+this.playerWeaponButtons.push({ key, bg });
+const ex = 320 - 30 + (idx % 2) * 60, ey = 82 + Math.floor(idx / 2) * 38;
+const ebg = this.add.rectangle(ex, ey, 56, 34, 0x1a1a1a).setStrokeStyle(1, 0x555555).setInteractive({ useHandCursor: true });
+this.add.image(ex, ey - 5, key).setScale(0.3);
+this.add.text(ex, ey + 10, weaponDefs[key].name, { fontSize: '7px', color: '#fff' }).setOrigin(0.5);
+ebg.on('pointerdown', () => this.selectEnemyWeapon(key));
+this.enemyWeaponButtons.push({ key, bg: ebg });
+}
+buildWeaponColumn(centerX: number, startY: number, onPick: (k: string) => void, includeRandom: boolean) {
+const keys = NORMAL_KEYS.concat(includeRandom ? ['random'] : []);
+const buttons: any[] = [];
+keys.forEach((key, i) => {
+const col = i % 2, row = Math.floor(i / 2);
+const x = centerX - 30 + col * 60, y = startY + row * 38;
+const bg = this.add.rectangle(x, y, 56, 34, 0x1a1a1a).setStrokeStyle(1, 0x555555).setInteractive({ useHandCursor: true });
+if (key === 'random') {
+this.add.text(x, y - 5, '🎲', { fontSize: '13px' }).setOrigin(0.5);
+this.add.text(x, y + 10, 'Ngẫu Nhiên', { fontSize: '7px', color: '#fff' }).setOrigin(0.5);
+} else {
+this.add.image(x, y - 5, key).setScale(0.3);
+this.add.text(x, y + 10, weaponDefs[key].name, { fontSize: '7px', color: '#fff' }).setOrigin(0.5);
+}
+bg.on('pointerdown', () => onPick(key));
+buttons.push({ key, bg });
+});
+return buttons;
+}
+selectHp(hp: number) {
+this.selectedHp = hp;
+this.hpButtons.forEach(b => b.bg.setStrokeStyle(b.hp === hp ? 2 : 1, b.hp === hp ? 0x4caf50 : 0x555555));
+}
+selectPlayerWeapon(key: string) {
+this.playerWeaponKey = key;
+this.playerWeaponButtons.forEach(b => b.bg.setStrokeStyle(b.key === key ? 2 : 1, b.key === key ? 0x4caf50 : 0x555555));
+}
+selectEnemyWeapon(key: string) {
+this.enemyWeaponKey = key;
+this.enemyWeaponButtons.forEach(b => b.bg.setStrokeStyle(b.key === key ? 2 : 1, b.key === key ? 0x4caf50 : 0x555555));
+}
+rollElement() {
+if (this.coins < 100) { alert('Không đủ 100 xu!'); return; }
+this.coins -= 100;
+const picked = rollElementKey();
+this.inventory[picked] = (this.inventory[picked] || 0) + 1;
+this.coinText.setText(this.coins + ' Xu');
+saveCoins(this.coins); saveInv(this.inventory);
+this.renderInventory();
+}
+doMergeAll() {
+this.inventory = mergeAll(this.inventory);
+saveInv(this.inventory);
+this.renderInventory();
+}
+renderInventory() {
+this.invContainer.removeAll(true);
+const keys = Object.keys(this.inventory).filter(k => this.inventory[k] > 0).sort();
+if (keys.length === 0) {
+const t = this.add.text(250, 345, 'Chưa có nguyên tố nào trong kho', { fontSize: '10px', color: '#666' }).setOrigin(0.5);
+this.invContainer.add(t); return;
+}
+keys.slice(0, 12).forEach((key, i) => {
+const col = i % 6, row = Math.floor(i / 6);
+const x = 45 + col * 70, y = 336 + row * 28;
+const active = this.equippedElementKey === key;
+const isGlitch = key.startsWith('glitch');
+const bg = this.add.rectangle(x, y, 64, 24, active ? 0x1f3d24 : 0x1a1a1a).setStrokeStyle(active ? 2 : 1, isGlitch ? 0xff00ff : (active ? 0x4caf50 : 0x555555)).setInteractive({ useHandCursor: true });
+const txt = this.add.text(x, y - 4, elLabel(key), { fontSize: '8px', color: isGlitch ? '#ff66ff' : '#fff' }).setOrigin(0.5);
+const cnt = this.add.text(x, y + 6, 'x' + this.inventory[key], { fontSize: '7px', color: '#aaa' }).setOrigin(0.5);
+bg.on('pointerdown', () => {
+this.equippedElementKey = active ? null : key;
+this.renderInventory();
+});
+this.invContainer.add([bg, txt, cnt]);
+});
+}
+}
+export class MainScene extends Phaser.Scene {
+startHp: number = 500;
+playerWeaponKey: string = 'songquyen';
+enemyWeaponKey: string = 'kiem';
+playerElementKey: string | null = null;
+playerRole: string | null = null;
+battleOver: boolean = false;
+dmgMul: number = 1;
+p!: Entity;
+e!: Entity;
+player: any;
+enemy: any;
+pRig: any;
+eRig: any;
+playerLabel: any;
+enemyLabel: any;
+playerHpBar: any;
+enemyHpBar: any;
+playerHpText: any;
+enemyHpText: any;
+logText: any;
+laserGfx: any;
+minigunGfx: any;
+qteGfx: any;
+mapBg: any;
+shadowClones: any[] = [];
+comboQTE: any = null;
+comboWallCrash: any = null;
+constructor() { super('MainScene'); }
+init(data: any) {
+this.startHp = data.playerHp || 500;
+this.playerWeaponKey = data.playerWeaponKey || 'songquyen';
+this.enemyWeaponKey = data.enemyWeaponKey || 'kiem';
+this.playerElementKey = data.playerElementKey || null;
+this.playerRole = data.playerRole || null;
+}
+create() {
+(window as any).currentGameScene = this;
+ensureWeaponIcons(this);
+this.battleOver = false;
+this.dmgMul = getDmgMultiplier(this.startHp);
+this.shadowClones = [];
+this.comboQTE = null;
+this.comboWallCrash = null;
+this.mapBg = this.add.rectangle(250, 250, 500, 500, 0x0f0f0f).setDepth(-100);
+this.p = this.makeEntity(weaponDefs[this.playerWeaponKey], this.startHp, this.playerElementKey ? elObj(this.playerElementKey) : null, this.playerRole);
+this.e = this.makeEntity(weaponDefs[this.enemyWeaponKey], this.startHp, Math.random() < 0.5 ? elObjRandom() : null, null);
+this.player = this.add.circle(200, 280, 18, 0x378add).setStrokeStyle(3, 0x1a3a5c);
+this.physics.add.existing(this.player);
+this.player.body.setCircle(18).setBounce(1, 1).setCollideWorldBounds(true);
+this.player.body.onWorldBounds = true;
+this.player.body.setVelocity(90, 90);
+this.enemy = this.add.circle(300, 220, 18, 0xe24b4a).setStrokeStyle(3, 0x7a1f14);
+this.physics.add.existing(this.enemy);
+this.enemy.body.setCircle(18).setBounce(1, 1).setCollideWorldBounds(true);
+this.enemy.body.onWorldBounds = true;
+this.enemy.body.setVelocity(-90, -90);
+this.physics.add.collider(this.player, this.enemy, this.onCollide, null, this);
+this.physics.world.on('worldbounds', (body: any) => {
+const hitBall = body.gameObject === this.player ? this.player : this.enemy;
+const hitEntity = hitBall === this.player ? this.p : this.e;
+const opp = hitBall === this.player ? this.e : this.p;
+if (this.comboWallCrash && this.comboWallCrash.victimIsPlayer === (hitEntity === this.p)) {
+const crashDmg = Math.round(this.comboWallCrash.dmg * this.dmgMul);
+this.applyDamage(hitEntity, crashDmg);
+this.logText.setText(`💥 ${(hitBall === this.player ? 'Bạn' : 'Địch')} ĐẬP TƯỜNG (-${crashDmg} HP)!`);
+this.comboWallCrash = null;
+this.updateBars(); this.checkEnd();
+}
+if (opp.element && opp.element.type === 'lightning') {
+const bolt = Math.round(lightningBoltDmg(opp.element.tier) * this.dmgMul);
+this.applyDamage(hitEntity, bolt);
+this.logText.setText((hitBall === this.player ? 'Bạn' : 'Địch') + ' dính sét giật va tường, -' + bolt + ' HP');
+this.updateBars(); this.checkEnd();
+}
+});
+this.laserGfx = this.add.graphics();
+this.minigunGfx = this.add.graphics();
+this.qteGfx = this.add.graphics();
+this.pRig = this.createRig(this.p, this.player);
+this.eRig = this.createRig(this.e, this.enemy);
+this.playerLabel = this.add.text(200, 245, this.buildLabelText(this.p), { fontSize: '9px', color: '#fff' }).setOrigin(0.5);
+this.enemyLabel = this.add.text(300, 245, this.buildLabelText(this.e), { fontSize: '9px', color: '#fff' }).setOrigin(0.5);
+this.playerHpBar = this.add.rectangle(30, 20, 110, 9, 0x378add).setOrigin(0, 0.5);
+this.enemyHpBar = this.add.rectangle(370, 20, 110, 9, 0xe24b4a).setOrigin(1, 0.5);
+this.add.rectangle(30, 20, 110, 9, 0x333333).setOrigin(0, 0.5).setDepth(-1);
+this.add.rectangle(370, 20, 110, 9, 0x333333).setOrigin(1, 0.5).setDepth(-1);
+this.playerHpText = this.add.text(30, 32, this.p.hp + '/' + this.p.maxHp, { fontSize: '9px', color: '#aaa', fontStyle: 'bold' });
+this.enemyHpText = this.add.text(370, 32, this.e.hp + '/' + this.e.maxHp, { fontSize: '9px', color: '#aaa', fontStyle: 'bold' }).setOrigin(1, 0);
+this.logText = this.add.text(250, 460, 'Trận đấu bắt đầu! (Tỉ lệ x' + this.dmgMul.toFixed(2) + ')', { fontSize: '11px', color: '#00ff88', fontStyle: 'bold' }).setOrigin(0.5);
+const restartBtn = this.add.rectangle(430, 480, 120, 28, 0x1a1a1a).setInteractive({ useHandCursor: true });
+this.add.text(430, 480, 'Quay lại Setup', { fontSize: '9px', color: '#fff' }).setOrigin(0.5);
+restartBtn.on('pointerdown', () => {
+const qte = document.getElementById('qte-overlay');
+if (qte) qte.style.display = 'none';
+this.scene.start('SetupScene');
+});
+this.input.keyboard.on('keydown', (e: KeyboardEvent) => {
+this.handleQTEInput(e.key.toUpperCase());
+});
+}
+buildLabelText(entity: Entity): string {
+let txt = entity.weapon.name;
+if (entity.element) txt += ' / ' + elLabel(entity.element.type + '_' + entity.element.tier);
+if (entity.role) txt += ' [' + entity.role.toUpperCase() + ']';
+return txt;
+}
+applyDamage(entity: Entity, rawDmg: number): number {
+const dmg = rawDmg * getRoleIncomingMultiplier(entity);
+entity.hp -= dmg;
+return dmg;
+}
+finalizeAttackerDmg(attacker: Entity, baseDmg: number): { dmg: number; isCrit: boolean } {
+let dmg = baseDmg;
+if (attacker.role === 'admin') {
+dmg *= ADMIN_DMG_MUL;
+if (attacker.admin && attacker.admin.buffActive) dmg *= 1.5;
+} else if (attacker.role === 'survivalist') {
+dmg *= getRoleDmgMultiplier(attacker);
+} else if (attacker.role === 'werewolf' && attacker.werewolf && attacker.werewolf.phase === 'night') {
+dmg *= WW_NIGHT_DMG_MUL;
+}
+return applyAdminCrit(attacker, dmg);
+}
+createRig(entity: Entity, ball: any) {
+const container = this.add.container(ball.x, ball.y);
+const rig: any = { container, armLeft: null, armRight: null, weaponLeft: null, weaponRight: null };
+const addArm = (side: string, key: string) => {
+const dir = side === 'right' ? 1 : -1;
+const arm = this.add.rectangle(dir * 14, 0, 16, 4, 0xd8b48c);
+const weapon = this.add.image(dir * 24, 0, key).setScale(0.3);
+container.add([arm, weapon]);
+if (side === 'right') { rig.armRight = arm; rig.weaponRight = weapon; }
+else { rig.armLeft = arm; rig.weaponLeft = weapon; }
+};
+if (entity.weapon.isComboFist) { addArm('left', 'songquyen'); addArm('right', 'songquyen'); }
+else if (entity.weapon.isDual) { addArm('left', 'giao'); addArm('right', 'mace'); }
+else { addArm('right', entity.weapon.key); }
+return rig;
+}
+makeEntity(weapon: WeaponDef, baseMaxHp: number, element: ElementData | null, role: string | null): Entity {
+let maxHp = role === 'survivalist' ? baseMaxHp + getRoleHpBonus(baseMaxHp) : baseMaxHp;
+const entity: Entity = { hp: maxHp, maxHp, weapon, element, role: role || null, nextAtkAt: 0, rootedUntil: 0, dot: null, torchBurn: null, godMode: false };
+if (weapon.isSpear || weapon.isDual) entity.spear = { state: 'idle', nextReadyAt: 0, chargeEndAt: 0, lungeCount: 0 };
+if (weapon.isMace || weapon.isDual) entity.mace = { state: 'idle', nextReadyAt: 0, chargeEndAt: 0 };
+if (weapon.isRailgun) entity.railgun = { nextFireAt: 0, firing: false, fireEndsAt: 0, lastTick: 0 };
+if (weapon.isMinigun) entity.minigun = { ammo: weapon.maxAmmo, lastShotAt: 0, reloading: false, reloadEndsAt: 0 };
+if (weapon.isRangedMelee) entity.rangedMelee = { lastAtkAt: 0 };
+if (weapon.isRitual) entity.ritual = { state: 'idle', nextReadyAt: 0, phaseEndAt: 0 };
+if (role === 'admin') entity.admin = { nextSkillAt: 12000, buffActive: false, buffUntil: 0, speedActive: false, speedUntil: 0 };
+if (role === 'werewolf') {
+entity.werewolfBase = baseMaxHp;
+entity.werewolf = { phase: 'day', phaseStartAt: 0, phaseEndAt: WW_DAY_DURATION_MS };
+entity.maxHp = Math.round(baseMaxHp * WW_DAY_HP_FRAC);
+entity.hp = entity.maxHp;
+}
+return entity;
+}
+onCollide() {
+if (this.battleOver) return;
+const now = this.time.now;
+const pairs = [
+[this.p, this.player, this.e, this.enemy, 'Bạn', this.pRig],
+[this.e, this.enemy, this.p, this.player, 'Địch', this.eRig]
+];
+pairs.forEach(([self, ownBall, opp, oppBall, name, rig]: any[]) => {
+if (now >= self.nextAtkAt && now > self.rootedUntil) {
+if (self.weapon.isComboFist) {
+this.startComboQTE(self, opp, ownBall, oppBall, name);
+} else {
+this.performAttack(self, opp, name, rig);
+}
+self.nextAtkAt = now + computeCooldown(self);
+}
+});
+}
+startComboQTE(attacker: Entity, defender: Entity, aBall: any, dBall: any, name: string) {
+if (this.comboQTE && this.comboQTE.active) return;
+const isPlayer = attacker === this.p;
+const initialKey = ['W', 'A', 'S', 'D'][Math.floor(Math.random() * 4)];
+this.comboQTE = {
+active: true,
+attackerIsPlayer: isPlayer,
+requiredKey: initialKey,
+comboCount: 1,
+expiresAt: this.time.now + 3000,
+attacker, defender, aBall, dBall, name
+};
+if (isPlayer) {
+const qte = document.getElementById('qte-overlay');
+if (qte) qte.style.display = 'block';
+this.logText.setText(`🥊 [COMBO BẮT ĐẦU] Nhấn [${initialKey}] trong 3s để tung đấm liên hoàn!`);
+} else {
+this.logText.setText(`🥊 [ĐỊCH DÙNG SONG QUYỀN] Bắt đầu chuỗi liên hoàn đấm!`);
+}
+this.doComboPunch(attacker, defender, aBall, dBall, name, 1);
+}
+handleQTEInput(rawKey: string) {
+if (!this.comboQTE || !this.comboQTE.active || !this.comboQTE.attackerIsPlayer || this.battleOver) return;
+let key = rawKey;
+if (key === 'ARROWUP') key = 'W';
+if (key === 'ARROWLEFT') key = 'A';
+if (key === 'ARROWDOWN') key = 'S';
+if (key === 'ARROWRIGHT') key = 'D';
+if (key === this.comboQTE.requiredKey) {
+this.comboQTE.comboCount += 1;
+const count = this.comboQTE.comboCount;
+this.comboQTE.requiredKey = ['W', 'A', 'S', 'D'][Math.floor(Math.random() * 4)];
+this.comboQTE.expiresAt = this.time.now + 3000;
+this.doComboPunch(this.p, this.e, this.player, this.enemy, 'Bạn', count);
+this.logText.setText(`🥊 Đấm trúng! COMBO x${count}! BẤM TIẾP: [${this.comboQTE.requiredKey}]`);
+} else {
+this.finishCombo('wrong_key');
+}
+}
+doComboPunch(attacker: Entity, defender: Entity, aBall: any, dBall: any, name: string, count: number) {
+let baseDmg = 5 + count * 2;
+if (attacker.element) {
+const el = attacker.element;
+if (el.type === 'fire') {
+const fireDps = 2 * el.tier;
+defender.dot = { dmgPerSec: fireDps, endsAt: this.time.now + 4000, lastTick: this.time.now };
+} else if (el.type === 'poison') {
+defender.poisonStacks = (defender.poisonStacks || 0) + 1;
+defender.dot = { dmgPerSec: defender.poisonStacks * 2, endsAt: this.time.now + 5000, lastTick: this.time.now };
+} else if (el.type === 'plant' && Math.random() < 0.3) {
+defender.rootedUntil = this.time.now + 1200;
+} else if (el.type === 'shadow' && count === 1) {
+this.spawnShadowClones(attacker === this.p, aBall);
+}
+}
+const { dmg: finalDmg } = this.finalizeAttackerDmg(attacker, baseDmg);
+const roundedDmg = Math.round(finalDmg * this.dmgMul);
+this.applyDamage(defender, roundedDmg);
+this.cameras.main.shake(100, 0.01);
+this.updateBars(); this.checkEnd();
+}
+spawnShadowClones(isPlayer: boolean, originBall: any) {
+for (let i = 0; i < 5; i++) {
+const angle = (Math.PI * 2 / 5) * i;
+const clone = this.add.circle(originBall.x + Math.cos(angle) * 30, originBall.y + Math.sin(angle) * 30, 10, isPlayer ? 0x60a5fa : 0xf87171, 0.7);
+this.physics.add.existing(clone);
+clone.body.setCircle(10).setBounce(1, 1).setCollideWorldBounds(true);
+clone.body.setVelocity((Math.random() - 0.5) * 150, (Math.random() - 0.5) * 150);
+this.time.delayedCall(6000, () => clone.destroy());
+}
+}
+finishCombo(reason: string) {
+if (!this.comboQTE) return;
+const qte = document.getElementById('qte-overlay');
+if (qte) qte.style.display = 'none';
+const { attacker, defender, aBall, dBall, name, comboCount } = this.comboQTE;
+const { dmg: finalDmg } = this.finalizeAttackerDmg(attacker, 30);
+const uppercutDmg = Math.round(finalDmg * this.dmgMul);
+this.applyDamage(defender, uppercutDmg);
+const dx = dBall.x - aBall.x || 1, dy = dBall.y - aBall.y || 1;
+const len = Math.hypot(dx, dy) || 1;
+dBall.body.setVelocity((dx / len) * 900, (dy / len) * 900);
+this.comboWallCrash = { victimIsPlayer: defender === this.p, dmg: 20 };
+this.cameras.main.shake(250, 0.03);
+this.logText.setText(`💥 [KẾT LIỄU] ${name} tung cú ĐẤM MÓC (Combo x${comboCount}) hất tung (-${uppercutDmg} HP)!`);
+this.comboQTE = null;
+attacker.nextAtkAt = this.time.now + 1000;
+this.updateBars(); this.checkEnd();
+}
+performAttack(attacker: Entity, defender: Entity, name: string, rig: any) {
+let dmg = dealDamage(attacker.weapon, defender.weapon, attacker.weapon.dmg || 10);
+const { dmg: finalDmg, isCrit } = this.finalizeAttackerDmg(attacker, dmg);
+const roundedDmg = Math.round(finalDmg * this.dmgMul);
+this.applyDamage(defender, roundedDmg);
+this.logText.setText(`${name} tấn công bằng ${attacker.weapon.name}${isCrit ? ' [CHÍ MẠNG!]' : ''}, gây ${roundedDmg} DMG!`);
+this.updateBars(); this.checkEnd();
+}
+updateBars() {
+this.playerHpBar.width = Math.max(0, this.p.hp / this.p.maxHp) * 110;
+this.enemyHpBar.width = Math.max(0, this.e.hp / this.e.maxHp) * 110;
+this.playerHpText.setText(Math.max(0, Math.round(this.p.hp)) + '/' + this.p.maxHp);
+this.enemyHpText.setText(Math.max(0, Math.round(this.e.hp)) + '/' + this.e.maxHp);
+}
+checkEnd() {
+if (this.battleOver) return;
+if (this.p.hp <= 0 || this.e.hp <= 0) {
+this.battleOver = true;
+const qte = document.getElementById('qte-overlay');
+if (qte) qte.style.display = 'none';
+this.player.body.setVelocity(0, 0);
+this.enemy.body.setVelocity(0, 0);
+if (this.e.hp <= 0 && this.p.hp > 0) {
+saveCoins(loadCoins() + 100);
+this.logText.setText('🏆 BẠN ĐÃ CHIẾN THẮNG! (+100 Xu)');
+} else if (this.p.hp <= 0 && this.e.hp > 0) {
+this.logText.setText('💀 BẠN ĐÃ THẤT BẠI!');
+} else {
+this.logText.setText('🤝 HÒA NHAU!');
+}
+}
+}
+update() {
+const now = this.time.now;
+if (this.comboQTE && this.comboQTE.active && now >= this.comboQTE.expiresAt) {
+this.finishCombo('timeout');
+}
+if (this.comboQTE && !this.comboQTE.attackerIsPlayer && !this.battleOver) {
+if (!this.comboQTE.lastAiCheck || now - this.comboQTE.lastAiCheck > 450) {
+this.comboQTE.lastAiCheck = now;
+if (Math.random() < 0.75 && this.comboQTE.comboCount < 5) {
+this.comboQTE.comboCount += 1;
+this.doComboPunch(this.e, this.p, this.enemy, this.player, 'Địch', this.comboQTE.comboCount);
+} else {
+this.finishCombo('ai_finisher');
+}
+}
+}
+[this.p, this.e].forEach(ent => {
+if (ent.dot && now >= ent.dot.lastTick + 1000) {
+if (now > ent.dot.endsAt) { ent.dot = null; return; }
+const d = Math.round(ent.dot.dmgPerSec * this.dmgMul);
+this.applyDamage(ent, d);
+ent.dot.lastTick = now;
+this.updateBars(); this.checkEnd();
+}
+});
+this.pRig.container.setPosition(this.player.x, this.player.y - 24);
+this.eRig.container.setPosition(this.enemy.x, this.enemy.y - 24);
+this.playerLabel.setPosition(this.player.x, this.player.y - 12);
+this.enemyLabel.setPosition(this.enemy.x, this.enemy.y - 12);
+}
+}
+const config = {
+type: Phaser.AUTO,
+parent: 'game-container',
+width: 500,
+height: 500,
+backgroundColor: '#0a0a0f',
+physics: { default: 'arcade', arcade: { debug: false } },
+scene: [SetupScene, MainScene]
+};
+new Phaser.Game(config);
+(window as any).triggerQTE = function(key: string) {
+if ((window as any).currentGameScene) (window as any).currentGameScene.handleQTEInput(key);
+};
+const consoleDiv = document.getElementById('admin-console') as HTMLElement;
+const consoleLogs = document.getElementById('console-logs') as HTMLElement;
+const consoleInput = document.getElementById('console-input') as HTMLInputElement;
+const adminToggleBtn = document.getElementById('admin-toggle-btn') as HTMLElement;
+function toggleConsole() {
+const isShow = consoleDiv.style.display === 'flex';
+consoleDiv.style.display = isShow ? 'none' : 'flex';
+if (!isShow && consoleInput) consoleInput.focus();
+}
+if (adminToggleBtn) adminToggleBtn.addEventListener('click', toggleConsole);
+window.addEventListener('keydown', (e: KeyboardEvent) => {
+if (e.key === '`' || e.key === '~') {
+e.preventDefault();
+toggleConsole();
+}
+});
+function appendLog(msg: string, color = '#00ff88') {
+if (!consoleLogs) return;
+const div = document.createElement('div');
+div.style.color = color;
+div.textContent = msg;
+consoleLogs.appendChild(div);
+consoleLogs.scrollTop = consoleLogs.scrollHeight;
+}
+if (consoleInput) {
+consoleInput.addEventListener('keydown', (e: KeyboardEvent) => {
+if (e.key === 'Enter') {
+const cmd = consoleInput.value.trim();
+consoleInput.value = '';
+if (!cmd) return;
+appendLog('> ' + cmd, '#fff');
+handleAdminCommand(cmd);
+}
+});
+}
+function handleAdminCommand(cmd: string) {
+const parts = cmd.split(' ');
+const c = parts[0].toLowerCase();
+const scene = (window as any).currentGameScene;
+switch (c) {
+case '/help':
+appendLog('=== SYSTEM COMMANDS ===');
+appendLog('/god : Toggle Invincibility');
+appendLog('/heal : Restore HP');
+appendLog('/buff : Multiply Attack');
+appendLog('/speed : Increase Frequency');
+appendLog('/-cd : Reset Cooldown');
+appendLog('/coins <amount> : Add Currency');
+appendLog('/kill : Terminate Target');
+appendLog('/clear : Clear Screen');
+break;
+case '/god':
+if (scene && scene.p) {
+scene.p.godMode = !scene.p.godMode;
+appendLog(`[SYSTEM] God Mode: ${scene.p.godMode ? 'ACTIVE' : 'INACTIVE'}`);
+}
+break;
+case '/heal':
+if (scene && scene.p) {
+scene.p.hp = scene.p.maxHp;
+scene.updateBars();
+appendLog('[SYSTEM] HP Restored.');
+}
+break;
+case '/buff':
+if (scene && scene.p) {
+scene.p.admin = scene.p.admin || {};
+scene.p.admin.buffActive = true;
+appendLog('[SYSTEM] Attack Buff Activated.');
+}
+break;
+case '/speed':
+if (scene && scene.p) {
+scene.p.admin = scene.p.admin || {};
+scene.p.admin.speedActive = true;
+appendLog('[SYSTEM] Speed Buff Activated.');
+}
+break;
+case '/-cd':
+if (scene && scene.p) {
+scene.p.nextAtkAt = 0;
+appendLog('[SYSTEM] Cooldown Cleared.');
+}
+break;
+case '/kill':
+if (scene && scene.e) {
+scene.e.hp = 0;
+scene.updateBars();
+scene.checkEnd();
+appendLog('[SYSTEM] Target Terminated.');
+}
+break;
+case '/coins':
+const amount = parseInt(parts[1]) || 1000;
+const current = loadCoins();
+saveCoins(current + amount);
+appendLog(`[SYSTEM] Added +${amount} (Total: ${current + amount})`);
+break;
+case '/clear':
+if (consoleLogs) consoleLogs.innerHTML = '';
+break;
+default:
+appendLog(`[ERROR] Unknown command "${c}". Use /help.`, '#ff4444');
+break;
+}
+}
